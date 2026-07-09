@@ -229,7 +229,7 @@ impl GraphicData {
     pub fn is_filled(&self, x: usize, y: usize, width: usize, height: usize) -> bool {
         // If there are pixels outside the picture we assume that the region is
         // not filled.
-        if x + width >= self.width || y + height >= self.height {
+        if x.saturating_add(width) > self.width || y.saturating_add(height) > self.height {
             return false;
         }
 
@@ -242,8 +242,8 @@ impl GraphicData {
         debug_assert!(self.color_type == ColorType::Rgba);
 
         for offset_y in y..y + height {
-            let offset = offset_y * self.width * 4;
-            let row = &self.pixels[offset..offset + width * 4];
+            let row_start = (offset_y * self.width + x) * 4;
+            let row = &self.pixels[row_start..row_start + width * 4];
 
             if row.chunks_exact(4).any(|pixel| pixel.last() != Some(&255)) {
                 return false;
@@ -643,10 +643,11 @@ fn check_opaque_region() {
     assert!(!graphic.is_filled(8, 8, 10, 10));
 
     let pixels = {
-        // Put a transparent 3x3 box inside the picture.
+        // Put a transparent 3x3 box inside the picture at a non-zero x
+        // offset, to ensure the horizontal position is taken into account.
         let mut data = vec![255; 10 * 10 * 4];
         for y in 3..6 {
-            let offset = y * 10 * 4;
+            let offset = (y * 10 + 4) * 4;
             data[offset..offset + 3 * 4].fill(0);
         }
         data
@@ -663,4 +664,17 @@ fn check_opaque_region() {
 
     assert!(graphic.is_filled(0, 0, 3, 3));
     assert!(!graphic.is_filled(1, 1, 4, 4));
+
+    // The transparent box is at x=4..7, y=3..6: a region overlapping it must
+    // be reported as not filled, while a region to its left is filled.
+    assert!(!graphic.is_filled(4, 3, 3, 3));
+    assert!(graphic.is_filled(0, 3, 3, 3));
+
+    // A region exactly touching the right/bottom edge is in bounds.
+    assert!(graphic.is_filled(8, 8, 2, 2));
+    assert!(graphic.is_filled(7, 7, 3, 3));
+
+    // A region extending past the right/bottom edge is out of bounds.
+    assert!(!graphic.is_filled(9, 9, 2, 2));
+    assert!(!graphic.is_filled(8, 8, 3, 3));
 }
