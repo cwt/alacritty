@@ -526,8 +526,14 @@ pub fn insert_graphic<L: EventListener>(
             if let Some(old_graphics) = term.grid()[line][Column(leftmost)].graphics() {
                 for graphic in old_graphics {
                     let tex = &*graphic.texture;
-                    if tex.width == width && tex.height == height && tex.cell_height == cell_height
-                    {
+                    // Compare the pixel dimensions of the graphics. A fully
+                    // opaque graphic with the same size, anchored at the same
+                    // top-left cell, covers exactly the same screen pixels
+                    // regardless of the current cell size, so the old graphic
+                    // can be safely replaced. This also keeps the optimization
+                    // working after a font resize, where the cell dimensions
+                    // may have changed.
+                    if tex.width == width && tex.height == height {
                         set.insert(tex.id);
                     }
                 }
