@@ -1107,6 +1107,75 @@ impl<T: EventListener> Handler for Term<T> {
             }
 
             self.grid[line][column].push_zerowidth(c);
+
+            // If variation selector-16 (emoji presentation) is applied to a single-width
+            // character, promote it to a wide character.
+            if c == '\u{fe0f}' && !self.grid[line][column].flags.contains(Flags::WIDE_CHAR) {
+                let is_adjacent = (!self.grid.cursor.input_needs_wrap
+                    && self.grid.cursor.point.column == column + 1
+                    && self.grid.cursor.point.line == line)
+                    || (self.grid.cursor.input_needs_wrap
+                        && column.0 + 1 == self.columns()
+                        && self.grid.cursor.point.line == line);
+
+                if is_adjacent {
+                    let columns = self.columns();
+                    if column + 1 < columns {
+                        self.grid[line][column].flags.insert(Flags::WIDE_CHAR);
+
+                        if self.mode.contains(TermMode::INSERT) && column + 2 < columns {
+                            let row = &mut self.grid[line][..];
+                            for col in ((column.0 + 1)..(columns - 1)).rev() {
+                                row.swap(col + 1, col);
+                            }
+                        }
+
+                        let spacer_col = column + 1;
+                        self.grid[line][spacer_col].c = ' ';
+                        self.grid[line][spacer_col].flags = Flags::WIDE_CHAR_SPACER;
+                        self.grid[line][spacer_col].extra = None;
+
+                        if spacer_col + 1 < columns {
+                            self.grid.cursor.point.column = spacer_col + 1;
+                            self.grid.cursor.input_needs_wrap = false;
+                        } else {
+                            self.grid.cursor.point.column = Column(columns - 1);
+                            self.grid.cursor.input_needs_wrap = true;
+                        }
+
+                        self.mark_line_damaged(line);
+                    } else if self.mode.contains(TermMode::LINE_WRAP) {
+                        let cell = self.grid[line][column].clone();
+                        self.grid[line][column].c = ' ';
+                        self.grid[line][column].flags = Flags::LEADING_WIDE_CHAR_SPACER;
+                        self.grid[line][column].extra = None;
+
+                        self.wrapline();
+
+                        let new_line = self.grid.cursor.point.line;
+                        self.grid[new_line][Column(0)] = cell;
+                        self.grid[new_line][Column(0)].flags.insert(Flags::WIDE_CHAR);
+
+                        if columns > 1 {
+                            self.grid[new_line][Column(1)].c = ' ';
+                            self.grid[new_line][Column(1)].flags = Flags::WIDE_CHAR_SPACER;
+                            self.grid[new_line][Column(1)].extra = None;
+                        }
+
+                        if columns > 2 {
+                            self.grid.cursor.point.column = Column(2);
+                            self.grid.cursor.input_needs_wrap = false;
+                        } else {
+                            self.grid.cursor.point.column = Column(columns - 1);
+                            self.grid.cursor.input_needs_wrap = true;
+                        }
+
+                        self.mark_line_damaged(line);
+                        self.mark_line_damaged(new_line);
+                    }
+                }
+            }
+
             return;
         }
 
@@ -2859,6 +2928,75 @@ mod tests {
         term.input('a');
 
         assert_eq!(term.grid()[cursor].c, '▒');
+    }
+
+    #[test]
+    fn emoji_variation_selector_wide_promotion() {
+        let size = TermSize::new(10, 20);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+
+        for c in "🕶️💼🚀".chars() {
+            term.input(c);
+        }
+
+        // Col 0: Sunglasses promoted to wide char with VS16
+        assert_eq!(term.grid()[Line(0)][Column(0)].c, '🕶');
+        assert!(term.grid()[Line(0)][Column(0)].flags.contains(Flags::WIDE_CHAR));
+        assert_eq!(term.grid()[Line(0)][Column(0)].zerowidth(), Some(&['\u{fe0f}'][..]));
+
+        // Col 1: Spacer following sunglasses
+        assert_eq!(term.grid()[Line(0)][Column(1)].c, ' ');
+        assert!(term.grid()[Line(0)][Column(1)].flags.contains(Flags::WIDE_CHAR_SPACER));
+
+        // Col 2: Briefcase (wide char)
+        assert_eq!(term.grid()[Line(0)][Column(2)].c, '💼');
+        assert!(term.grid()[Line(0)][Column(2)].flags.contains(Flags::WIDE_CHAR));
+
+        // Col 3: Spacer following briefcase
+        assert_eq!(term.grid()[Line(0)][Column(3)].c, ' ');
+        assert!(term.grid()[Line(0)][Column(3)].flags.contains(Flags::WIDE_CHAR_SPACER));
+
+        // Col 4: Rocket (wide char)
+        assert_eq!(term.grid()[Line(0)][Column(4)].c, '🚀');
+        assert!(term.grid()[Line(0)][Column(4)].flags.contains(Flags::WIDE_CHAR));
+
+        // Col 5: Spacer following rocket
+        assert_eq!(term.grid()[Line(0)][Column(5)].c, ' ');
+        assert!(term.grid()[Line(0)][Column(5)].flags.contains(Flags::WIDE_CHAR_SPACER));
+
+        // Cursor should now be at column 6
+        assert_eq!(term.grid().cursor.point.column, Column(6));
+    }
+
+    #[test]
+    fn emoji_variation_selector_linewrap() {
+        let size = TermSize::new(5, 10);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+
+        // Fill line up to the last column
+        term.input('a');
+        term.input('b');
+        term.input('c');
+        term.input('d');
+        // '🕶' is written at column 4 (the last column of row 0)
+        term.input('🕶');
+        // VS16 promotes '🕶' to wide char, which cannot fit at col 4, so it wraps to row 1
+        term.input('\u{fe0f}');
+
+        // Row 0, Col 4 should have a LEADING_WIDE_CHAR_SPACER
+        assert!(term.grid()[Line(0)][Column(4)].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER));
+
+        // Row 1, Col 0 should have the wide '🕶'
+        assert_eq!(term.grid()[Line(1)][Column(0)].c, '🕶');
+        assert!(term.grid()[Line(1)][Column(0)].flags.contains(Flags::WIDE_CHAR));
+        assert_eq!(term.grid()[Line(1)][Column(0)].zerowidth(), Some(&['\u{fe0f}'][..]));
+
+        // Row 1, Col 1 should have WIDE_CHAR_SPACER
+        assert!(term.grid()[Line(1)][Column(1)].flags.contains(Flags::WIDE_CHAR_SPACER));
+
+        // Cursor should be at Row 1, Col 2
+        assert_eq!(term.grid().cursor.point.line, Line(1));
+        assert_eq!(term.grid().cursor.point.column, Column(2));
     }
 
     #[test]
