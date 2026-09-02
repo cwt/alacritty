@@ -1111,12 +1111,12 @@ impl<T: EventListener> Handler for Term<T> {
             // If variation selector-16 (emoji presentation) is applied to a single-width
             // character, promote it to a wide character.
             if c == '\u{fe0f}' && !self.grid[line][column].flags.contains(Flags::WIDE_CHAR) {
-                let is_adjacent = (!self.grid.cursor.input_needs_wrap
-                    && self.grid.cursor.point.column == column + 1
-                    && self.grid.cursor.point.line == line)
-                    || (self.grid.cursor.input_needs_wrap
-                        && column.0 + 1 == self.columns()
-                        && self.grid.cursor.point.line == line);
+                let is_adjacent = self.grid.cursor.point.line == line
+                    && if self.grid.cursor.input_needs_wrap {
+                        column.0 + 1 == self.columns()
+                    } else {
+                        self.grid.cursor.point.column == column + 1
+                    };
 
                 if is_adjacent {
                     let columns = self.columns();
