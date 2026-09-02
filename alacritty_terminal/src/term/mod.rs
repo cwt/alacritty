@@ -1005,6 +1005,79 @@ impl<T> Term<T> {
         self.damage_cursor();
     }
 
+    /// If variation selector-16 (emoji presentation) is applied to a single-width
+    /// character, promote it to a wide character.
+    fn promote_vs16(&mut self, c: char, line: Line, column: Column)
+    where
+        T: EventListener,
+    {
+        if c == '\u{fe0f}' && !self.grid[line][column].flags.contains(Flags::WIDE_CHAR) {
+            let is_adjacent = self.grid.cursor.point.line == line
+                && if self.grid.cursor.input_needs_wrap {
+                    column.0 + 1 == self.columns()
+                } else {
+                    self.grid.cursor.point.column == column + 1
+                };
+
+            if is_adjacent {
+                let columns = self.columns();
+                if column + 1 < columns {
+                    self.grid[line][column].flags.insert(Flags::WIDE_CHAR);
+
+                    if self.mode.contains(TermMode::INSERT) && column + 2 < columns {
+                        let row = &mut self.grid[line][..];
+                        for col in ((column.0 + 1)..(columns - 1)).rev() {
+                            row.swap(col + 1, col);
+                        }
+                    }
+
+                    let spacer_col = column + 1;
+                    self.grid[line][spacer_col].c = ' ';
+                    self.grid[line][spacer_col].flags = Flags::WIDE_CHAR_SPACER;
+                    self.grid[line][spacer_col].extra = None;
+
+                    if spacer_col + 1 < columns {
+                        self.grid.cursor.point.column = spacer_col + 1;
+                        self.grid.cursor.input_needs_wrap = false;
+                    } else {
+                        self.grid.cursor.point.column = Column(columns - 1);
+                        self.grid.cursor.input_needs_wrap = true;
+                    }
+
+                    self.mark_line_damaged(line);
+                } else if self.mode.contains(TermMode::LINE_WRAP) {
+                    let cell = self.grid[line][column].clone();
+                    self.grid[line][column].c = ' ';
+                    self.grid[line][column].flags = Flags::LEADING_WIDE_CHAR_SPACER;
+                    self.grid[line][column].extra = None;
+
+                    self.wrapline();
+
+                    let new_line = self.grid.cursor.point.line;
+                    self.grid[new_line][Column(0)] = cell;
+                    self.grid[new_line][Column(0)].flags.insert(Flags::WIDE_CHAR);
+
+                    if columns > 1 {
+                        self.grid[new_line][Column(1)].c = ' ';
+                        self.grid[new_line][Column(1)].flags = Flags::WIDE_CHAR_SPACER;
+                        self.grid[new_line][Column(1)].extra = None;
+                    }
+
+                    if columns > 2 {
+                        self.grid.cursor.point.column = Column(2);
+                        self.grid.cursor.input_needs_wrap = false;
+                    } else {
+                        self.grid.cursor.point.column = Column(columns - 1);
+                        self.grid.cursor.input_needs_wrap = true;
+                    }
+
+                    self.mark_line_damaged(line);
+                    self.mark_line_damaged(new_line);
+                }
+            }
+        }
+    }
+
     /// Write `c` to the cell at the cursor position.
     #[inline(always)]
     fn write_at_cursor(&mut self, c: char) {
@@ -1107,75 +1180,7 @@ impl<T: EventListener> Handler for Term<T> {
             }
 
             self.grid[line][column].push_zerowidth(c);
-
-            // If variation selector-16 (emoji presentation) is applied to a single-width
-            // character, promote it to a wide character.
-            if c == '\u{fe0f}' && !self.grid[line][column].flags.contains(Flags::WIDE_CHAR) {
-                let is_adjacent = self.grid.cursor.point.line == line
-                    && if self.grid.cursor.input_needs_wrap {
-                        column.0 + 1 == self.columns()
-                    } else {
-                        self.grid.cursor.point.column == column + 1
-                    };
-
-                if is_adjacent {
-                    let columns = self.columns();
-                    if column + 1 < columns {
-                        self.grid[line][column].flags.insert(Flags::WIDE_CHAR);
-
-                        if self.mode.contains(TermMode::INSERT) && column + 2 < columns {
-                            let row = &mut self.grid[line][..];
-                            for col in ((column.0 + 1)..(columns - 1)).rev() {
-                                row.swap(col + 1, col);
-                            }
-                        }
-
-                        let spacer_col = column + 1;
-                        self.grid[line][spacer_col].c = ' ';
-                        self.grid[line][spacer_col].flags = Flags::WIDE_CHAR_SPACER;
-                        self.grid[line][spacer_col].extra = None;
-
-                        if spacer_col + 1 < columns {
-                            self.grid.cursor.point.column = spacer_col + 1;
-                            self.grid.cursor.input_needs_wrap = false;
-                        } else {
-                            self.grid.cursor.point.column = Column(columns - 1);
-                            self.grid.cursor.input_needs_wrap = true;
-                        }
-
-                        self.mark_line_damaged(line);
-                    } else if self.mode.contains(TermMode::LINE_WRAP) {
-                        let cell = self.grid[line][column].clone();
-                        self.grid[line][column].c = ' ';
-                        self.grid[line][column].flags = Flags::LEADING_WIDE_CHAR_SPACER;
-                        self.grid[line][column].extra = None;
-
-                        self.wrapline();
-
-                        let new_line = self.grid.cursor.point.line;
-                        self.grid[new_line][Column(0)] = cell;
-                        self.grid[new_line][Column(0)].flags.insert(Flags::WIDE_CHAR);
-
-                        if columns > 1 {
-                            self.grid[new_line][Column(1)].c = ' ';
-                            self.grid[new_line][Column(1)].flags = Flags::WIDE_CHAR_SPACER;
-                            self.grid[new_line][Column(1)].extra = None;
-                        }
-
-                        if columns > 2 {
-                            self.grid.cursor.point.column = Column(2);
-                            self.grid.cursor.input_needs_wrap = false;
-                        } else {
-                            self.grid.cursor.point.column = Column(columns - 1);
-                            self.grid.cursor.input_needs_wrap = true;
-                        }
-
-                        self.mark_line_damaged(line);
-                        self.mark_line_damaged(new_line);
-                    }
-                }
-            }
-
+            self.promote_vs16(c, line, column);
             return;
         }
 
