@@ -504,7 +504,7 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 [[package]]
 name = "crossfont"
 version = "0.8.1"
-source = "git+ssh://git@github.com/cwt/crossfont.git?branch=master#9e5b42381443c5678a04a64c761798a14ae57692"
+source = "git+https://github.com/cwt/crossfont.git?branch=master#9e5b42381443c5678a04a64c761798a14ae57692"
 dependencies = [
  "core-foundation",
  "core-foundation-sys",

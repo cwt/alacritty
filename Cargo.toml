@@ -25,4 +25,4 @@ toml_edit = "0.24.0"
 x11-clipboard = { git = "https://github.com/quininer/x11-clipboard.git", rev = "19ab2163cf0bd0db607e827a5214571990307866" }
 # Use a fork of `crossfont` that adds `Symbols Nerd Font` to the macOS Core Text
 # fallback list, so Nerd Fonts glyphs render without a patched primary font.
-crossfont = { git = "ssh://git@github.com/cwt/crossfont.git", branch = "master" }
+crossfont = { git = "https://github.com/cwt/crossfont.git", branch = "master" }
